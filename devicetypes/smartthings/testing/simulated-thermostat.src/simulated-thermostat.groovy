@@ -44,6 +44,9 @@ import groovy.transform.Field
     HEATING: "heating"
 ]
 
+@Field final String CELSIUS    = "C"
+@Field final String FAHRENHEIT = "F"
+
 @Field final List HEAT_ONLY_MODES = [MODE.HEAT, MODE.EHEAT]
 @Field final List COOL_ONLY_MODES = [MODE.COOL]
 @Field final List DUAL_SETPOINT_MODES = [MODE.AUTO]
@@ -53,31 +56,98 @@ import groovy.transform.Field
 @Field List SUPPORTED_MODES = [MODE.OFF, MODE.HEAT, MODE.AUTO, MODE.COOL, MODE.EHEAT]
 @Field List SUPPORTED_FAN_MODES = [FAN_MODE.OFF, FAN_MODE.AUTO, FAN_MODE.ON]
 
-@Field final Float    THRESHOLD_DEGREES = 1.0
 @Field final Integer  SIM_HVAC_CYCLE_SECONDS = 15
 @Field final Integer  DELAY_EVAL_ON_MODE_CHANGE_SECONDS = 3
 
-@Field final Integer  MIN_SETPOINT = 35
-@Field final Integer  MAX_SETPOINT = 95
-@Field final Integer  AUTO_MODE_SETPOINT_SPREAD = 4 // In auto mode, heat & cool setpoints must be this far apart
+@Field final Float  INCREMENT_DEGREES_C = 0.5
+@Field final Float  INCREMENT_DEGREES_F = 1.0
+
+@Field final Float  MIN_COOLING_SETPOINT_C = 15.5
+@Field final Float  MIN_COOLING_SETPOINT_F = 60.0
+@Field final Float  MAX_COOLING_SETPOINT_C = 50.0
+@Field final Float  MAX_COOLING_SETPOINT_F = 120.0
+
+@Field final Float  MIN_HEATING_SETPOINT_C = 1.5
+@Field final Float  MIN_HEATING_SETPOINT_F = 35.0
+@Field final Float  MAX_HEATING_SETPOINT_C = 27.0
+@Field final Float  MAX_HEATING_SETPOINT_F = 80.0
+
+@Field final String  DEFAULT_MODE           = MODE.OFF
+@Field final String  DEFAULT_FAN_MODE       = FAN_MODE.AUTO
+@Field final String  DEFAULT_OP_STATE       = OP_STATE.IDLE
+@Field final String  DEFAULT_PREVIOUS_STATE = OP_STATE.HEATING
+@Field final String  DEFAULT_SETPOINT_TYPE  =  SETPOINT_TYPE.HEATING
+
+@Field final Float  DEFAULT_TEMPERATURE_C      = 23.0
+@Field final Float  DEFAULT_TEMPERATURE_F      = 74.0
+
+@Field final Float  DEFAULT_HEATING_SETPOINT_C = 20.0
+@Field final Float  DEFAULT_HEATING_SETPOINT_F = 68.0
+
+@Field final Float  DEFAULT_COOLING_SETPOINT_C = 26.5
+@Field final Float  DEFAULT_COOLING_SETPOINT_F = 80
+
+@Field final Integer  DEFAULT_HUMIDITY = 52 // percent
+
 // end config
 
 // derivatives
-@Field final IntRange FULL_SETPOINT_RANGE = (MIN_SETPOINT..MAX_SETPOINT)
-@Field final IntRange HEATING_SETPOINT_RANGE = (MIN_SETPOINT..(MAX_SETPOINT - AUTO_MODE_SETPOINT_SPREAD))
-@Field final IntRange COOLING_SETPOINT_RANGE = ((MIN_SETPOINT + AUTO_MODE_SETPOINT_SPREAD)..MAX_SETPOINT)
+String getTEMPERATURE_SCALE() {
+    return location.temperatureScale ?: CELSIUS
+}
+String getTEMPERATURE_SCALE_UNIT() {
+    return "°${TEMPERATURE_SCALE}"
+}
+Boolean getIS_CELSIUS() {
+    return TEMPERATURE_SCALE == CELSIUS
+}
 
-// defaults
-@Field final String   DEFAULT_MODE = MODE.OFF
-@Field final String   DEFAULT_FAN_MODE = FAN_MODE.AUTO
-@Field final String   DEFAULT_OP_STATE = OP_STATE.IDLE
-@Field final String   DEFAULT_PREVIOUS_STATE = OP_STATE.HEATING
-@Field final String   DEFAULT_SETPOINT_TYPE = SETPOINT_TYPE.HEATING
-@Field final Integer  DEFAULT_TEMPERATURE = 72
-@Field final Integer  DEFAULT_HEATING_SETPOINT = 68
-@Field final Integer  DEFAULT_COOLING_SETPOINT = 80
-@Field final Integer  DEFAULT_THERMOSTAT_SETPOINT = DEFAULT_HEATING_SETPOINT
-@Field final Integer  DEFAULT_HUMIDITY = 52
+
+Float getINCREMENT_DEGREES() {
+    return IS_CELSIUS ? INCREMENT_DEGREES_C : INCREMENT_DEGREES_F
+}
+Float getTHRESHOLD_DEGREES() {
+    return INCREMENT_DEGREES
+}
+
+Float getMIN_COOLING_SETPOINT() {
+    return IS_CELSIUS ? MIN_COOLING_SETPOINT_C : MIN_COOLING_SETPOINT_F
+}
+Float getMAX_COOLING_SETPOINT() {
+    return IS_CELSIUS ? MAX_COOLING_SETPOINT_C : MAX_COOLING_SETPOINT_F
+}
+Float getMIN_HEATING_SETPOINT() {
+    return IS_CELSIUS ? MIN_HEATING_SETPOINT_C : MIN_HEATING_SETPOINT_F
+}
+Float getMAX_HEATING_SETPOINT() {
+    return IS_CELSIUS ? MAX_HEATING_SETPOINT_C : MAX_HEATING_SETPOINT_F
+}
+
+ObjectRange getHEATING_SETPOINT_RANGE() {
+    return (MIN_HEATING_SETPOINT..MAX_HEATING_SETPOINT)
+}
+ObjectRange getCOOLING_SETPOINT_RANGE() {
+    return (MIN_COOLING_SETPOINT..MAX_COOLING_SETPOINT)
+}
+
+Float getDEFAULT_TEMPERATURE() {
+    return IS_CELSIUS ? DEFAULT_TEMPERATURE_C : DEFAULT_TEMPERATURE_F
+}
+
+Float getDEFAULT_HEATING_SETPOINT() {
+    return IS_CELSIUS ? DEFAULT_HEATING_SETPOINT_C : DEFAULT_HEATING_SETPOINT_F
+}
+Float getDEFAULT_COOLING_SETPOINT() {
+    return IS_CELSIUS ? DEFAULT_COOLING_SETPOINT_C : DEFAULT_COOLING_SETPOINT_F
+}
+Float getDEFAULT_THERMOSTAT_SETPOINT() {
+    return DEFAULT_HEATING_SETPOINT
+}
+
+Float getAUTO_MODE_SETPOINT_SPREAD() {
+    // In auto mode, heat & cool setpoints must be at least this far apart
+    return INCREMENT_DEGREES * 2
+}
 
 
 metadata {
@@ -108,19 +178,22 @@ metadata {
         command "setHumidityPercent", ["number"]
         command "delayedEvaluate"
         command "runSimHvacCycle"
+
+        command "markDeviceOnline"
+        command "markDeviceOffline"
     }
 
     tiles(scale: 2) {
         multiAttributeTile(name:"thermostatMulti", type:"thermostat", width:6, height:4) {
             tileAttribute("device.temperature", key: "PRIMARY_CONTROL") {
-                attributeState("default", label:'${currentValue} °F', unit:"°F")
+                attributeState("temp", label:'${currentValue}°', unit:"°F", defaultState: true)
             }
             tileAttribute("device.temperature", key: "VALUE_CONTROL") {
                 attributeState("VALUE_UP", action: "setpointUp")
                 attributeState("VALUE_DOWN", action: "setpointDown")
             }
             tileAttribute("device.humidity", key: "SECONDARY_CONTROL") {
-                attributeState("default", label: '${currentValue}% Hum', unit: "%", icon: "st.Weather.weather12")
+                attributeState("humidity", label: '${currentValue}%', unit: "%", defaultState: true)
             }
             tileAttribute("device.thermostatOperatingState", key: "OPERATING_STATE") {
                 attributeState("idle", backgroundColor: "#FFFFFF")
@@ -135,10 +208,10 @@ metadata {
                 attributeState("emergency heat", label: 'e-heat')
             }
             tileAttribute("device.heatingSetpoint", key: "HEATING_SETPOINT") {
-                attributeState("default", label: '${currentValue}', unit: "°F")
+                attributeState("default", label: '${currentValue}', unit: "°F", defaultState: true)
             }
             tileAttribute("device.coolingSetpoint", key: "COOLING_SETPOINT") {
-                attributeState("default", label: '${currentValue}', unit: "°F")
+                attributeState("default", label: '${currentValue}', unit: "°F", defaultState: true)
             }
         }
 
@@ -160,7 +233,7 @@ metadata {
         }
 
         valueTile("heatingSetpoint", "device.heatingSetpoint", width: 2, height: 2, decoration: "flat") {
-            state "heat", label:'Heat\n${currentValue} °F', unit: "°F", backgroundColor:"#E86D13"
+            state "heat", label:'Heat\n${currentValue} ${TEMPERATURE_SCALE_UNIT}', unit: '${TEMPERATURE_SCALE_UNIT}', backgroundColor:"#E86D13"
         }
         standardTile("heatDown", "device.temperature", width: 1, height: 1, decoration: "flat") {
             state "default", label: "heat", action: "heatDown", icon: "st.thermostat.thermostat-down"
@@ -170,7 +243,7 @@ metadata {
         }
 
         valueTile("coolingSetpoint", "device.coolingSetpoint", width: 2, height: 2, decoration: "flat") {
-            state "cool", label: 'Cool\n${currentValue} °F', unit: "°F", backgroundColor: "#00A0DC"
+            state "cool", label: 'Cool\n${currentValue} ${TEMPERATURE_SCALE_UNIT}', unit: '${TEMPERATURE_SCALE_UNIT}', backgroundColor: "#00A0DC"
         }
         standardTile("coolDown", "device.temperature", width: 1, height: 1, decoration: "flat") {
             state "default", label: "cool", action: "coolDown", icon: "st.thermostat.thermostat-down"
@@ -179,8 +252,8 @@ metadata {
             state "default", label: "cool", action: "coolUp", icon: "st.thermostat.thermostat-up"
         }
 
-        valueTile("roomTemp", "device.temperature", width: 2, height: 2, decoration: "flat") {
-            state "default", label:'${currentValue} °F', unit: "°F", backgroundColors: [
+        valueTile("roomTemp", "device.temperature", width: 2, height: 1, decoration: "flat") {
+            state "default", label:'${currentValue} ${TEMPERATURE_SCALE_UNIT}', unit: '${TEMPERATURE_SCALE_UNIT}', backgroundColors: [
                 // Celsius Color Range
                 [value:  0, color: "#153591"],
                 [value:  7, color: "#1E9CBB"],
@@ -199,9 +272,11 @@ metadata {
                 [value: 96, color: "#BC2323"]
             ]
         }
+
         standardTile("tempDown", "device.temperature", width: 1, height: 1, decoration: "flat") {
             state "default", label: "temp", action: "tempDown", icon: "st.thermostat.thermostat-down"
         }
+
         standardTile("tempUp", "device.temperature", width: 1, height: 1, decoration: "flat") {
             state "default", label: "temp", action: "tempUp", icon: "st.thermostat.thermostat-up"
         }
@@ -214,20 +289,32 @@ metadata {
         valueTile("blank1x1", "device.switch", width: 1, height: 1, decoration: "flat") {
             state "default", label: ""
         }
+
         valueTile("blank2x1", "device.switch", width: 2, height: 1, decoration: "flat") {
             state "default", label: ""
         }
 
-        valueTile("reset", "device.switch", width: 4, height: 1, decoration: "flat") {
-            state "default", label: "Reset to Defaults", action: "configure"
-        }
-
-        valueTile("humiditySliderLabel", "device.humidity", width: 4, height: 1, decoration: "flat") {
+        valueTile("humiditySliderLabel", "device.humidity", width: 3, height: 1, decoration: "flat") {
             state "default", label: 'Simulated Humidity: ${currentValue}%'
         }
 
-        controlTile("humiditySlider", "device.humidity", "slider", width: 4, height: 1, range: "(0..100)") {
+        controlTile("humiditySlider", "device.humidity", "slider", width: 1, height: 1, range: "(0..100)") {
             state "humidity", action: "setHumidityPercent"
+        }
+
+        standardTile("refresh", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
+            state "default", label: "", action: "refresh", icon: "st.secondary.refresh"
+        }
+
+        valueTile("reset", "device.switch", width: 2, height: 2, decoration: "flat") {
+            state "default", label: "Reset to\nDefaults", action: "configure"
+        }
+
+        standardTile("deviceHealthControl", "device.healthStatus", decoration: "flat", width: 2, height: 2, inactiveLabel: false) {
+            state "online",  label: "ONLINE", backgroundColor: "#00A0DC", action: "markDeviceOffline", icon: "st.Health & Wellness.health9", nextState: "goingOffline", defaultState: true
+            state "offline", label: "OFFLINE", backgroundColor: "#E86D13", action: "markDeviceOnline", icon: "st.Health & Wellness.health9", nextState: "goingOnline"
+            state "goingOnline", label: "Going ONLINE", backgroundColor: "#FFFFFF", icon: "st.Health & Wellness.health9"
+            state "goingOffline", label: "Going OFFLINE", backgroundColor: "#FFFFFF", icon: "st.Health & Wellness.health9"
         }
 
         main("roomTemp")
@@ -239,17 +326,17 @@ metadata {
             "coolingSetpoint",
             "fanMode",
             "blank2x1", "blank2x1",
+            "deviceHealthControl", "reset", "refresh",
             "blank1x1", "simControlLabel", "blank1x1",
-            "tempDown", "tempUp", "humiditySliderLabel",
-            "roomTemp", "humiditySlider",
-            "reset"
+            "tempDown", "tempUp", "humiditySliderLabel", "humiditySlider",
+            "roomTemp"
         ])
     }
 }
 
 def installed() {
     log.trace "Executing 'installed'"
-    initialize()
+    configure()
     done()
 }
 
@@ -261,27 +348,46 @@ def updated() {
 
 def configure() {
     log.trace "Executing 'configure'"
+    // this would be for a physical device when it gets a handler assigned to it
+
+    // for HealthCheck
+    sendEvent(name: "DeviceWatch-Enroll", value: [protocol: "cloud", scheme:"untracked"].encodeAsJson(), displayed: false)
+    markDeviceOnline()
+
     initialize()
     done()
+}
+
+def markDeviceOnline() {
+    setDeviceHealth("online")
+}
+
+def markDeviceOffline() {
+    setDeviceHealth("offline")
+}
+
+private setDeviceHealth(String healthState) {
+    log.debug("healthStatus: ${device.currentValue('healthStatus')}; DeviceWatch-DeviceStatus: ${device.currentValue('DeviceWatch-DeviceStatus')}")
+    // ensure healthState is valid
+    List validHealthStates = ["online", "offline"]
+    healthState = validHealthStates.contains(healthState) ? healthState : device.currentValue("healthStatus")
+    // set the healthState
+    sendEvent(name: "DeviceWatch-DeviceStatus", value: healthState)
+    sendEvent(name: "healthStatus", value: healthState)
 }
 
 private initialize() {
     log.trace "Executing 'initialize'"
 
-    // for HealthCheck
-    sendEvent(name: "DeviceWatch-DeviceStatus", value: "online")
-    sendEvent(name: "healthStatus", value: "online")
-    sendEvent(name: "DeviceWatch-Enroll", value: [protocol: "cloud", scheme:"untracked"].encodeAsJson(), displayed: false)
-
-    sendEvent(name: "temperature", value: DEFAULT_TEMPERATURE, unit: "°F")
+    sendEvent(name: "temperature", value: DEFAULT_TEMPERATURE, unit: TEMPERATURE_SCALE_UNIT)
     sendEvent(name: "humidity", value: DEFAULT_HUMIDITY, unit: "%")
-    sendEvent(name: "heatingSetpoint", value: DEFAULT_HEATING_SETPOINT, unit: "°F")
-    sendEvent(name: "heatingSetpointMin", value: HEATING_SETPOINT_RANGE.getFrom(), unit: "°F")
-    sendEvent(name: "heatingSetpointMax", value: HEATING_SETPOINT_RANGE.getTo(), unit: "°F")
-    sendEvent(name: "thermostatSetpoint", value: DEFAULT_THERMOSTAT_SETPOINT, unit: "°F")
-    sendEvent(name: "coolingSetpoint", value: DEFAULT_COOLING_SETPOINT, unit: "°F")
-    sendEvent(name: "coolingSetpointMin", value: COOLING_SETPOINT_RANGE.getFrom(), unit: "°F")
-    sendEvent(name: "coolingSetpointMax", value: COOLING_SETPOINT_RANGE.getTo(), unit: "°F")
+    sendEvent(name: "heatingSetpoint", value: DEFAULT_HEATING_SETPOINT, unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "heatingSetpointMin", value: HEATING_SETPOINT_RANGE.getFrom(), unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "heatingSetpointMax", value: HEATING_SETPOINT_RANGE.getTo(), unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "thermostatSetpoint", value: DEFAULT_THERMOSTAT_SETPOINT, unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "coolingSetpoint", value: DEFAULT_COOLING_SETPOINT, unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "coolingSetpointMin", value: COOLING_SETPOINT_RANGE.getFrom(), unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "coolingSetpointMax", value: COOLING_SETPOINT_RANGE.getTo(), unit: TEMPERATURE_SCALE_UNIT)
     sendEvent(name: "thermostatMode", value: DEFAULT_MODE)
     sendEvent(name: "thermostatFanMode", value: DEFAULT_FAN_MODE)
     sendEvent(name: "thermostatOperatingState", value: DEFAULT_OP_STATE)
@@ -291,7 +397,6 @@ private initialize() {
     state.lastUserSetpointMode = DEFAULT_PREVIOUS_STATE
     unschedule()
 }
-
 
 // parse events into attributes
 def parse(String description) {
@@ -316,10 +421,10 @@ def refresh() {
     sendEvent(name: "thermostatMode", value: getThermostatMode())
     sendEvent(name: "thermostatFanMode", value: getFanMode())
     sendEvent(name: "thermostatOperatingState", value: getOperatingState())
-    sendEvent(name: "thermostatSetpoint", value: getThermostatSetpoint(), unit: "°F")
-    sendEvent(name: "coolingSetpoint", value: getCoolingSetpoint(), unit: "°F")
-    sendEvent(name: "heatingSetpoint", value: getHeatingSetpoint(), unit: "°F")
-    sendEvent(name: "temperature", value: getTemperature(), unit: "°F")
+    sendEvent(name: "thermostatSetpoint", value: getThermostatSetpoint(), unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "coolingSetpoint", value: getCoolingSetpoint(), unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "heatingSetpoint", value: getHeatingSetpoint(), unit: TEMPERATURE_SCALE_UNIT)
+    sendEvent(name: "temperature", value: getTemperature(), unit: TEMPERATURE_SCALE_UNIT)
     sendEvent(name: "humidity", value: getHumidityPercent(), unit: "%")
     done()
 }
@@ -405,32 +510,32 @@ private setOperatingState(String operatingState) {
 }
 
 // setpoint
-private Integer getThermostatSetpoint() {
+private Number getThermostatSetpoint() {
     def ts = device.currentState("thermostatSetpoint")
-    return ts ? ts.getIntegerValue() : DEFAULT_THERMOSTAT_SETPOINT
+    return ts ? ts.getValue() : DEFAULT_THERMOSTAT_SETPOINT
 }
 
-private Integer getHeatingSetpoint() {
+private Number getHeatingSetpoint() {
     def hs = device.currentState("heatingSetpoint")
-    return hs ? hs.getIntegerValue() : DEFAULT_HEATING_SETPOINT
+    return hs ? hs.getValue() : DEFAULT_HEATING_SETPOINT
 }
 
-def setHeatingSetpoint(Double degreesF) {
-    log.trace "Executing 'setHeatingSetpoint' $degreesF"
+def setHeatingSetpoint(Double newSetpoint) {
+    log.trace "Executing 'setHeatingSetpoint' $newSetpoint"
     state.lastUserSetpointMode = SETPOINT_TYPE.HEATING
-    setHeatingSetpointInternal(degreesF)
+    setHeatingSetpointInternal(newSetpoint)
     done()
 }
 
-private setHeatingSetpointInternal(Double degreesF) {
-    log.debug "setHeatingSetpointInternal($degreesF)"
-    proposeHeatSetpoint(degreesF as Integer)
-    evaluateOperatingState(heatingSetpoint: degreesF)
+private setHeatingSetpointInternal(Double newSetpoint) {
+    log.debug "setHeatingSetpointInternal($newSetpoint)"
+    proposeHeatSetpoint(newSetpoint)
+    evaluateOperatingState(heatingSetpoint: newSetpoint)
 }
 
 private heatUp() {
     log.trace "Executing 'heatUp'"
-    def newHsp = getHeatingSetpoint() + 1
+    def newHsp = getHeatingSetpoint() + INCREMENT_DEGREES
     if (getThermostatMode() in HEAT_ONLY_MODES + DUAL_SETPOINT_MODES) {
         setHeatingSetpoint(newHsp)
     }
@@ -439,34 +544,34 @@ private heatUp() {
 
 private heatDown() {
     log.trace "Executing 'heatDown'"
-    def newHsp = getHeatingSetpoint() - 1
+    def newHsp = getHeatingSetpoint() - INCREMENT_DEGREES
     if (getThermostatMode() in HEAT_ONLY_MODES + DUAL_SETPOINT_MODES) {
         setHeatingSetpoint(newHsp)
     }
     done()
 }
 
-private Integer getCoolingSetpoint() {
+private Number getCoolingSetpoint() {
     def cs = device.currentState("coolingSetpoint")
-    return cs ? cs.getIntegerValue() : DEFAULT_COOLING_SETPOINT
+    return cs ? cs.getValue() : DEFAULT_COOLING_SETPOINT
 }
 
-def setCoolingSetpoint(Double degreesF) {
-    log.trace "Executing 'setCoolingSetpoint' $degreesF"
+def setCoolingSetpoint(Double newSetpoint) {
+    log.trace "Executing 'setCoolingSetpoint' $newSetpoint"
     state.lastUserSetpointMode = SETPOINT_TYPE.COOLING
-    setCoolingSetpointInternal(degreesF)
+    setCoolingSetpointInternal(newSetpoint)
     done()
 }
 
-private setCoolingSetpointInternal(Double degreesF) {
-    log.debug "setCoolingSetpointInternal($degreesF)"
-    proposeCoolSetpoint(degreesF as Integer)
-    evaluateOperatingState(coolingSetpoint: degreesF)
+private setCoolingSetpointInternal(Double newSetpoint) {
+    log.debug "setCoolingSetpointInternal($newSetpoint)"
+    proposeCoolSetpoint(newSetpoint)
+    evaluateOperatingState(coolingSetpoint: newSetpoint)
 }
 
 private coolUp() {
     log.trace "Executing 'coolUp'"
-    def newCsp = getCoolingSetpoint() + 1
+    def newCsp = getCoolingSetpoint() + INCREMENT_DEGREES
     if (getThermostatMode() in COOL_ONLY_MODES + DUAL_SETPOINT_MODES) {
         setCoolingSetpoint(newCsp)
     }
@@ -475,7 +580,7 @@ private coolUp() {
 
 private coolDown() {
     log.trace "Executing 'coolDown'"
-    def newCsp = getCoolingSetpoint() - 1
+    def newCsp = getCoolingSetpoint() - INCREMENT_DEGREES
     if (getThermostatMode() in COOL_ONLY_MODES + DUAL_SETPOINT_MODES) {
         setCoolingSetpoint(newCsp)
     }
@@ -506,13 +611,13 @@ private setpointDown() {
 }
 
 // simulated temperature
-private Integer getTemperature() {
+private Number getTemperature() {
     def ts = device.currentState("temperature")
-    Integer currentTemp = DEFAULT_TEMPERATURE
+    Number currentTemp = DEFAULT_TEMPERATURE
     try {
-        currentTemp = ts.integerValue
+        currentTemp = ts.value
     } catch (all) {
-        log.warn "Encountered an error getting Integer value of temperature state. Value is '$ts.stringValue'. Reverting to default of $DEFAULT_TEMPERATURE"
+        log.warn "Encountered an error getting value of temperature state. Value is '$ts.stringValue'. Reverting to default of $DEFAULT_TEMPERATURE"
         setTemperature(DEFAULT_TEMPERATURE)
     }
     return currentTemp
@@ -520,17 +625,17 @@ private Integer getTemperature() {
 
 // changes the "room" temperature for the simulation
 private setTemperature(newTemp) {
-    sendEvent(name:"temperature", value: newTemp)
+    sendEvent(name:"temperature", value: roundToNearest(newTemp, INCREMENT_DEGREES), unit: TEMPERATURE_SCALE_UNIT)
     evaluateOperatingState(temperature: newTemp)
 }
 
 private tempUp() {
-    def newTemp = getTemperature() ? getTemperature() + 1 : DEFAULT_TEMPERATURE
+    def newTemp = getTemperature() ? getTemperature() + INCREMENT_DEGREES : DEFAULT_TEMPERATURE
     setTemperature(newTemp)
 }
 
 private tempDown() {
-    def newTemp = getTemperature() ? getTemperature() - 1 : DEFAULT_TEMPERATURE
+    def newTemp = getTemperature() ? getTemperature() - INCREMENT_DEGREES : DEFAULT_TEMPERATURE
     setTemperature(newTemp)
 }
 
@@ -538,7 +643,7 @@ private setHumidityPercent(Integer humidityValue) {
     log.trace "Executing 'setHumidityPercent' to $humidityValue"
     Integer curHum = device.currentValue("humidity") as Integer
     if (humidityValue != null) {
-        Integer hum = boundInt(humidityValue, (0..100))
+        Integer hum = boundFloat(humidityValue, (0..100))
         if (hum != humidityValue) {
             log.warn "Corrrected humidity value to $hum"
             humidityValue = hum
@@ -554,32 +659,40 @@ private getHumidityPercent() {
     return hp ? hp.getIntegerValue() : DEFAULT_HUMIDITY
 }
 
-/**
- * Ensure an integer value is within the provided range, or set it to either extent if it is outside the range.
- * @param Number value         The integer to evaluate
- * @param IntRange theRange     The range within which the value must fall
- * @return Integer
- */
-private Integer boundInt(Number value, IntRange theRange) {
-    value = Math.max(theRange.getFrom(), Math.min(theRange.getTo(), value))
-    return value.toInteger()
+private Number roundToNearest(Float theNumber, Float roundTo) {
+    Number rounded = roundTo * Math.round(theNumber/roundTo);
+    if (incr == Math.floor(roundTo)) {
+        rounded = rounded as Integer
+    }
+    return rounded
 }
 
-private proposeHeatSetpoint(Integer heatSetpoint) {
+/**
+ * Ensure an numeric value is within the provided range, or set it to either extent if it is outside the range.
+ * @param Number value         The number to evaluate
+ * @param IntRange theRange     The range within which the value must fall
+ * @return Float
+ */
+private Float boundFloat(Number value, ObjectRange theRange) {
+    value = Math.max(theRange.getFrom(), Math.min(theRange.getTo(), value))
+    return value.toFloat()
+}
+
+private proposeHeatSetpoint(Number heatSetpoint) {
     proposeSetpoints(heatSetpoint, null)
 }
 
-private proposeCoolSetpoint(Integer coolSetpoint) {
+private proposeCoolSetpoint(Number coolSetpoint) {
     proposeSetpoints(null, coolSetpoint)
 }
 
-private proposeSetpoints(Integer heatSetpoint, Integer coolSetpoint, String prioritySetpointType=null) {
-    Integer newHeatSetpoint;
-    Integer newCoolSetpoint;
+private proposeSetpoints(Float heatSetpoint, Float coolSetpoint, String prioritySetpointType=null) {
+    Float newHeatSetpoint;
+    Float newCoolSetpoint;
 
     String mode = getThermostatMode()
-    Integer proposedHeatSetpoint = heatSetpoint?:getHeatingSetpoint()
-    Integer proposedCoolSetpoint = coolSetpoint?:getCoolingSetpoint()
+    Float proposedHeatSetpoint = heatSetpoint?:getHeatingSetpoint()
+    Float proposedCoolSetpoint = coolSetpoint?:getCoolingSetpoint()
     if (coolSetpoint == null) {
         prioritySetpointType = SETPOINT_TYPE.HEATING
     } else if (heatSetpoint == null) {
@@ -591,24 +704,24 @@ private proposeSetpoints(Integer heatSetpoint, Integer coolSetpoint, String prio
     }
 
     if (mode in HEAT_ONLY_MODES) {
-        newHeatSetpoint = boundInt(proposedHeatSetpoint, FULL_SETPOINT_RANGE)
+        newHeatSetpoint = boundFloat(proposedHeatSetpoint, HEATING_SETPOINT_RANGE)
         if (newHeatSetpoint != proposedHeatSetpoint) {
             log.warn "proposed heat setpoint $proposedHeatSetpoint is out of bounds. Modifying..."
         }
     } else if (mode in COOL_ONLY_MODES) {
-        newCoolSetpoint = boundInt(proposedCoolSetpoint, FULL_SETPOINT_RANGE)
+        newCoolSetpoint = boundFloat(proposedCoolSetpoint, COOLING_SETPOINT_RANGE)
         if (newCoolSetpoint != proposedCoolSetpoint) {
             log.warn "proposed cool setpoint $proposedCoolSetpoint is out of bounds. Modifying..."
         }
     } else if (mode in DUAL_SETPOINT_MODES) {
         if (prioritySetpointType == SETPOINT_TYPE.HEATING) {
-            newHeatSetpoint = boundInt(proposedHeatSetpoint, HEATING_SETPOINT_RANGE)
-            IntRange customCoolingSetpointRange = ((newHeatSetpoint + AUTO_MODE_SETPOINT_SPREAD)..COOLING_SETPOINT_RANGE.getTo())
-            newCoolSetpoint = boundInt(proposedCoolSetpoint, customCoolingSetpointRange)
+            newHeatSetpoint = boundFloat(proposedHeatSetpoint, HEATING_SETPOINT_RANGE)
+            ObjectRange customCoolingSetpointRange = ((newHeatSetpoint + AUTO_MODE_SETPOINT_SPREAD)..COOLING_SETPOINT_RANGE.getTo())
+            newCoolSetpoint = boundFloat(proposedCoolSetpoint, customCoolingSetpointRange)
         } else if (prioritySetpointType == SETPOINT_TYPE.COOLING) {
-            newCoolSetpoint = boundInt(proposedCoolSetpoint, COOLING_SETPOINT_RANGE)
-            IntRange customHeatingSetpointRange = (HEATING_SETPOINT_RANGE.getFrom()..(newCoolSetpoint - AUTO_MODE_SETPOINT_SPREAD))
-            newHeatSetpoint = boundInt(proposedHeatSetpoint, customHeatingSetpointRange)
+            newCoolSetpoint = boundFloat(proposedCoolSetpoint, COOLING_SETPOINT_RANGE)
+            ObjectRange customHeatingSetpointRange = (HEATING_SETPOINT_RANGE.getFrom()..(newCoolSetpoint - AUTO_MODE_SETPOINT_SPREAD))
+            newHeatSetpoint = boundFloat(proposedHeatSetpoint, customHeatingSetpointRange)
         }
     } else if (mode == MODE.OFF) {
         log.debug "Thermostat is off - no setpoints will be modified"
@@ -618,22 +731,22 @@ private proposeSetpoints(Integer heatSetpoint, Integer coolSetpoint, String prio
 
     if (newHeatSetpoint != null) {
         log.info "set heating setpoint of $newHeatSetpoint"
-        sendEvent(name: "heatingSetpoint", value: newHeatSetpoint, unit: "F")
+        sendEvent(name: "heatingSetpoint", value: roundToNearest(newHeatSetpoint, INCREMENT_DEGREES), unit: TEMPERATURE_SCALE_UNIT)
     }
     if (newCoolSetpoint != null) {
         log.info "set cooling setpoint of $newCoolSetpoint"
-        sendEvent(name: "coolingSetpoint", value: newCoolSetpoint, unit: "F")
+        sendEvent(name: "coolingSetpoint", value: roundToNearest(newCoolSetpoint, INCREMENT_DEGREES), unit: TEMPERATURE_SCALE_UNIT)
     }
 }
 
 // sets the thermostat setpoint and operating state and starts the "HVAC" or lets it end.
 private evaluateOperatingState(Map overrides) {
     // check for override values, otherwise use current state values
-    Integer currentTemp = overrides.find { key, value ->
+    Float currentTemp = overrides.find { key, value ->
             "$key".toLowerCase().startsWith("curr")|"$key".toLowerCase().startsWith("temp")
-        }?.value?:getTemperature() as Integer
-    Integer heatingSetpoint = overrides.find { key, value -> "$key".toLowerCase().startsWith("heat") }?.value?:getHeatingSetpoint() as Integer
-    Integer coolingSetpoint = overrides.find { key, value -> "$key".toLowerCase().startsWith("cool") }?.value?:getCoolingSetpoint() as Integer
+        }?.value?:getTemperature() as Float
+    Float heatingSetpoint = overrides.find { key, value -> "$key".toLowerCase().startsWith("heat") }?.value?:getHeatingSetpoint() as Float
+    Float coolingSetpoint = overrides.find { key, value -> "$key".toLowerCase().startsWith("cool") }?.value?:getCoolingSetpoint() as Float
 
     String tsMode = getThermostatMode()
     String currentOperatingState = getOperatingState()
@@ -649,17 +762,17 @@ private evaluateOperatingState(Map overrides) {
             isHeating = true
             setOperatingState(OP_STATE.HEATING)
         }
-        sendEvent(name: "thermostatSetpoint", value: heatingSetpoint)
+        sendEvent(name: "thermostatSetpoint", value: roundToNearest(heatingSetpoint, INCREMENT_DEGREES), unit: TEMPERATURE_SCALE_UNIT)
     }
     if (tsMode in COOL_ONLY_MODES + DUAL_SETPOINT_MODES && !isHeating) {
         if (currentTemp - coolingSetpoint >= THRESHOLD_DEGREES) {
             isCooling = true
             setOperatingState(OP_STATE.COOLING)
         }
-        sendEvent(name: "thermostatSetpoint", value: coolingSetpoint)
+        sendEvent(name: "thermostatSetpoint", value: roundToNearest(coolingSetpoint, INCREMENT_DEGREES), unit: TEMPERATURE_SCALE_UNIT)
     }
     else {
-        sendEvent(name: "thermostatSetpoint", value: heatingSetpoint)
+        sendEvent(name: "thermostatSetpoint", value: roundToNearest(heatingSetpoint, INCREMENT_DEGREES), unit: TEMPERATURE_SCALE_UNIT)
     }
     if (isHeating || isCooling) {
         startSimHvac() // we need to run the HVAC
